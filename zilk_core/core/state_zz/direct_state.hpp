@@ -29,7 +29,7 @@
 // Also declared in zilk_core/core/trie_zz/mpt.hpp with the same #ifndef guard;
 // whichever header is parsed first defines it, so the values MUST match.
 #ifndef USE_HASH_KEY
-#define USE_HASH_KEY 0
+#define USE_HASH_KEY 1
 #endif
 
 namespace evmone::state {

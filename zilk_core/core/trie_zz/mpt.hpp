@@ -44,7 +44,7 @@ using ::zilkworm::keccak_bytes32;
 // misses and balance reads as 0. With USE_HASH_KEY=1, DirectState falls back to
 // a hashed-key node-store lookup. Default OFF -> compiled away, zero overhead.
 #ifndef USE_HASH_KEY
-#define USE_HASH_KEY 0
+#define USE_HASH_KEY 1
 #endif
 
 namespace zilkworm {
