@@ -9,17 +9,17 @@ path = "src/main.rs"
 
 [dependencies]
 # Core VM (always needed for execution)
-riscv_transpiler = { path = "/ws/zksync-airbender/riscv_transpiler", features = ["delegation", "flamegraph"] }
+riscv_transpiler = { git = "https://github.com/hatemosphere/zksync-airbender", rev = "fb293245", features = ["delegation", "flamegraph"] }
 
 # Proving dependencies
-execution_utils = { path = "/ws/zksync-airbender/execution_utils", default-features = false, features = ["prover", "verifier_binaries"] }
-prover = { path = "/ws/zksync-airbender/prover", features = ["prover"] }
-worker = { path = "/ws/zksync-airbender/worker" }
-setups = { path = "/ws/zksync-airbender/circuit_defs/setups" }
-verifier_common = { path = "/ws/zksync-airbender/verifier_common" }
+execution_utils = { git = "https://github.com/hatemosphere/zksync-airbender", rev = "fb293245", default-features = false, features = ["prover", "verifier_binaries"] }
+prover = { git = "https://github.com/hatemosphere/zksync-airbender", rev = "fb293245", features = ["prover"] }
+worker = { git = "https://github.com/hatemosphere/zksync-airbender", rev = "fb293245" }
+setups = { git = "https://github.com/hatemosphere/zksync-airbender", rev = "fb293245" }
+verifier_common = { git = "https://github.com/hatemosphere/zksync-airbender", rev = "fb293245" }
 
 # GPU prover (optional, requires CUDA)
-gpu_prover = { path = "/ws/zksync-airbender/gpu_prover", optional = true }
+gpu_prover = { git = "https://github.com/hatemosphere/zksync-airbender", rev = "fb293245", optional = true }
 
 # Shared z6m prover infrastructure (block fetching, RLP encoding)
 z6m_common = { path = "../common" }
