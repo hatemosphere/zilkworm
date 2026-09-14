@@ -1,6 +1,7 @@
 use base64::{self, Engine};
 use reqwest::Client;
-use std::time::Duration;
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 use tracing::{error, info, warn};
 
 #[derive(Clone, Debug)]
@@ -16,6 +17,10 @@ pub struct EthproofsClient {
     endpoint: String,
     api_token: String,
     client: Client,
+    /// When set, proved payloads that exhaust the retry ladder are written here
+    /// and resubmitted by [`Self::resubmit_spooled`] until accepted or expired,
+    /// so a sustained ethproofs outage cannot discard computed proofs.
+    pub spool_dir: Option<PathBuf>,
 }
 
 impl EthproofsClient {
@@ -30,6 +35,7 @@ impl EthproofsClient {
             endpoint: config.endpoint,
             api_token: config.token,
             client,
+            spool_dir: None,
         }
     }
 
@@ -142,6 +148,68 @@ impl EthproofsClient {
 
         if let Err(e) = self.post_json("/proofs/proved", &json).await {
             error!("ethproofs proved block={} FAILED: {}", block_number, e);
+            self.spool(block_number, &json);
+        }
+    }
+
+    fn spool(&self, block_number: u64, json: &serde_json::Value) {
+        let Some(dir) = &self.spool_dir else { return };
+        let write = || -> std::io::Result<()> {
+            std::fs::create_dir_all(dir)?;
+            let tmp = dir.join(format!("{}.json.tmp", block_number));
+            std::fs::write(&tmp, serde_json::to_vec(json).unwrap_or_default())?;
+            std::fs::rename(&tmp, dir.join(format!("{}.json", block_number)))
+        };
+        match write() {
+            Ok(()) => info!("ethproofs proved block={} spooled for resubmission", block_number),
+            Err(e) => error!("ethproofs spool block={} failed: {}", block_number, e),
+        }
+    }
+
+    /// Resubmits spooled proved payloads. Files are removed on acceptance, on a
+    /// 4xx (permanent), on parse failure, or after 6 days (past the weekly
+    /// snapshot window they can no longer count).
+    pub async fn resubmit_spooled(&self) {
+        let Some(dir) = &self.spool_dir else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let expired = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| SystemTime::now().duration_since(t).ok())
+                .is_some_and(|age| age > Duration::from_secs(6 * 24 * 3600));
+            if expired {
+                warn!("ethproofs spool {:?} expired, dropping", path.file_name());
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+            let json: serde_json::Value = match std::fs::read(&path)
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+            {
+                Some(v) => v,
+                None => {
+                    warn!("ethproofs spool {:?} unreadable, dropping", path.file_name());
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            };
+            match self.post_json("/proofs/proved", &json).await {
+                Ok(()) => {
+                    info!("ethproofs spool {:?} resubmitted OK", path.file_name());
+                    let _ = std::fs::remove_file(&path);
+                }
+                Err(e) if e.contains("-> 4") => {
+                    warn!("ethproofs spool {:?} rejected permanently: {}", path.file_name(), e);
+                    let _ = std::fs::remove_file(&path);
+                }
+                Err(e) => warn!("ethproofs spool {:?} resubmit failed, keeping: {}", path.file_name(), e),
+            }
         }
     }
 }

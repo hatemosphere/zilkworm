@@ -129,10 +129,11 @@ impl AirbenderService {
         let guest_exit_pc = execution_utils::find_binary_exit_point(&binary_bytes);
         info!("Guest exit sequence PC: 0x{:08x}", guest_exit_pc);
 
-        let eth_client = config
-            .ethproofs
-            .clone()
-            .map(|c| Arc::new(EthproofsClient::new(c)));
+        let eth_client = config.ethproofs.clone().map(|c| {
+            let mut client = EthproofsClient::new(c);
+            client.spool_dir = Some(config.data_dir.join("proofs-spool"));
+            Arc::new(client)
+        });
 
         // Initialize GPU prover once — reused for all blocks
         #[cfg(feature = "gpu")]
@@ -213,6 +214,18 @@ impl AirbenderService {
         info!("Starting airbender service (pipelined fetch / prove)");
         let me = Arc::new(self);
         let (tx, rx) = mpsc::channel::<WorkItem>(PROVER_QUEUE_CAPACITY);
+
+        if let Some(c) = &me.eth_client {
+            // Retry outlasting outages: resubmit spooled proved payloads until
+            // accepted; anything landing before the Monday snapshot still counts.
+            let c = c.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                    c.resubmit_spooled().await;
+                }
+            });
+        }
 
         let fetcher = tokio::spawn({
             let me = Arc::clone(&me);
