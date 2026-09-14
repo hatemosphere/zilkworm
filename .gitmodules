@@ -1,6 +1,6 @@
 [submodule "evmone"]
 	path = third_party/evmone
-	url = https://github.com/erigontech/zvm1.git
+	url = https://github.com/hatemosphere/zvm1.git
 	branch = release/airbender
 [submodule "intx"]
 	path = third_party/intx
