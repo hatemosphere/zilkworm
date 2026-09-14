@@ -33,7 +33,31 @@ impl EthproofsClient {
         }
     }
 
+    // Transient ethproofs outages happen (2026-07-27: ~9s of 500s cost a scored
+    // block); callers are detached tokio tasks, so waiting out a blip is free.
     async fn post_json(&self, path: &str, json: &serde_json::Value) -> Result<(), String> {
+        const RETRY_DELAYS_SECS: [u64; 4] = [2, 10, 30, 60];
+
+        let mut last_err;
+        match self.post_json_once(path, json).await {
+            Ok(()) => return Ok(()),
+            Err((false, msg)) => return Err(msg),
+            Err((true, msg)) => last_err = msg,
+        }
+        for (i, delay) in RETRY_DELAYS_SECS.iter().enumerate() {
+            tokio::time::sleep(Duration::from_secs(*delay)).await;
+            warn!("ethproofs {} retry {}/{} after: {}", path, i + 1, RETRY_DELAYS_SECS.len(), last_err);
+            match self.post_json_once(path, json).await {
+                Ok(()) => return Ok(()),
+                Err((false, msg)) => return Err(msg),
+                Err((true, msg)) => last_err = msg,
+            }
+        }
+        Err(last_err)
+    }
+
+    /// Err is (retryable, message): retryable = transport failure or 408/429/5xx.
+    async fn post_json_once(&self, path: &str, json: &serde_json::Value) -> Result<(), (bool, String)> {
         let url = format!("{}{}", self.endpoint, path);
 
         // Print the full request JSON (truncate proof field to avoid flooding logs)
@@ -55,7 +79,7 @@ impl EthproofsClient {
             .json(json)
             .send()
             .await
-            .map_err(|e| format!("request failed: {}", e))?;
+            .map_err(|e| (true, format!("request failed: {}", e)))?;
 
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
@@ -66,7 +90,10 @@ impl EthproofsClient {
         } else {
             let msg = format!("ethproofs {} -> {} {}", path, status, body);
             error!("{}", msg);
-            Err(msg)
+            let retryable = status.is_server_error()
+                || status == reqwest::StatusCode::REQUEST_TIMEOUT
+                || status == reqwest::StatusCode::TOO_MANY_REQUESTS;
+            Err((retryable, msg))
         }
     }
 
